@@ -100,21 +100,24 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
         Here is where the processing itself takes place.
         """
 
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
+        # Retrieve the feature source.
         sources = self.parameterAsLayerList(parameters, self.LAYERS, context)
 
+        # Each layer has a explode step and a validity check step,
+        # then there is a merge step, a offset step, and a dissolve step.
         n_steps = len(sources) * 2 + 3
         child_feedback = QgsProcessingMultiStepFeedback(n_steps, feedback)
 
         sources_valid = []
         for s in sources:
+            # Start by deleting any pre-existing layer attributes;
+            # Merge won't overwrite them and they will break Offsetter.
             field_index = s.fields().indexOf('layer')
             if field_index != -1:
                 s.dataProvider().deleteAttributes([field_index])
                 s.updateFields()
 
+            # Step 1: Explode lines.
             i_explodelines = {
                 'INPUT': s,
                 'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
@@ -123,6 +126,9 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
                 context=context, feedback=child_feedback, is_child_algorithm=True)
             if not self.__nextStep(child_feedback): return {}
 
+            # Step 2: Check validity.
+            # Set the layer name to match the original layer name.
+            # This will become the 'layer' attribute in the final result.
             i_checkvalidity = {
                 'INPUT_LAYER': s_exploded['OUTPUT'],
                 'METHOD': 2,
@@ -134,6 +140,7 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
             sources_valid.append(s_valid['VALID_OUTPUT'])
             if not self.__nextStep(child_feedback): return {}
 
+        # Step 3: Merge all the layers together.
         i_mergevectorlayers = {
             'LAYERS': sources_valid,
             'CRS': None,
@@ -144,6 +151,7 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
             context=context, feedback=child_feedback, is_child_algorithm=True)
         if not self.__nextStep(child_feedback): return {}
 
+        # Step 4: Offset the merged layers.
         i_offsetter = {
             'INPUT': s_merged['OUTPUT'],
             'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT,
@@ -153,6 +161,7 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
             context=context, feedback=child_feedback, is_child_algorithm=True)
         if not self.__nextStep(child_feedback): return {}
 
+        # Step 5: Dissolve to re-connect continuous lines.
         i_dissolve = {
             'INPUT': s_offset['OUTPUT'],
             'FIELD': ['layer','offset'],
@@ -162,6 +171,7 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
         s_dissolve = processing.run("native:dissolve", i_dissolve,
             context=context, feedback=child_feedback, is_child_algorithm=True)
 
+        # Set the output layer name with a post-processor.
         if context.willLoadLayerOnCompletion(s_dissolve['OUTPUT']):
             context.layerToLoadOnCompletionDetails(s_dissolve['OUTPUT'])\
                 .setPostProcessor(MultiOffsetPostProcessor.create())
