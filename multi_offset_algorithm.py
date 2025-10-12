@@ -110,16 +110,21 @@ class MultiOffsetAlgorithm(QgsProcessingAlgorithm):
 
         sources_valid = []
         for s in sources:
+            field_index = s.fields().indexOf('layer')
+            if field_index != -1:
+                s.dataProvider().deleteAttributes([field_index])
+                s.updateFields()
+
             i_explodelines = {
                 'INPUT': s,
                 'OUTPUT': QgsProcessing.TEMPORARY_OUTPUT
             }
-            exploded = processing.run("native:explodelines", i_explodelines,
+            s_exploded = processing.run("native:explodelines", i_explodelines,
                 context=context, feedback=child_feedback, is_child_algorithm=True)
             if not self.__nextStep(child_feedback): return {}
 
             i_checkvalidity = {
-                'INPUT_LAYER': exploded['OUTPUT'],
+                'INPUT_LAYER': s_exploded['OUTPUT'],
                 'METHOD': 2,
                 'IGNORE_RING_SELF_INTERSECTION': False,
                 'VALID_OUTPUT': 'memory:' + s.name()
